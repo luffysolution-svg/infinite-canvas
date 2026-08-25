@@ -398,9 +398,19 @@ function falImageSizeParams(quality: string, size: string) {
 /** A small, stable Fal model used only to probe whether a key is valid; the {} body fails validation (422) rather than running generation, so the check has zero cost. */
 const FAL_PING_MODEL = "fal-ai/flux/schnell";
 
-/** Curated starting points shown under "拉取模型列表" for providers with no list-models endpoint; users can still add any other model name manually. */
-const FAL_PRESET_MODELS = ["fal-ai/nano-banana-pro", "fal-ai/nano-banana-pro/edit", "fal-ai/flux-kontext/dev", "fal-ai/flux/schnell", "fal-ai/kling-video/v2.5-turbo/pro/text-to-video"];
-const VERTEX_PRESET_MODELS = ["gemini-3.1-flash-image", "gemini-2.5-flash-image", "gemini-2.5-pro", "gemini-2.5-flash"];
+/** Curated starting points shown under "拉取模型列表" for providers with no list-models endpoint; users can still add any other model name manually. Each entry was verified live against the real endpoint (existing route + valid auth) before being added here. */
+const FAL_PRESET_MODELS = [
+    "google/nano-banana-pro",
+    "google/nano-banana-pro/edit",
+    "fal-ai/nano-banana-2",
+    "fal-ai/nano-banana-2/edit",
+    "fal-ai/flux-kontext/dev",
+    "fal-ai/flux/schnell",
+    "openai/gpt-image-2",
+    "bytedance/seedream/v5/pro/text-to-image",
+    "fal-ai/ltx-video",
+];
+const VERTEX_PRESET_MODELS = ["gemini-3-pro-image-preview", "gemini-3.1-flash-image", "gemini-2.5-flash-image", "gemini-2.5-pro", "gemini-2.5-flash"];
 
 type FalImagePayload = { images?: Array<{ url?: string }>; image?: { url?: string }; detail?: unknown };
 
@@ -762,7 +772,8 @@ async function requestVertexImagesOnce(config: AiConfig, prompt: string, referen
     const response = await axios.post<GeminiPayload>(
         vertexApiUrl(config, "generateContent"),
         {
-            ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config) } }),
+            // Vertex's response_format.image fields use different (protobuf enum) value formats than the Gemini Developer API's "9:16"/"4K" strings, so size/quality controls aren't mapped here yet — the model falls back to its own default.
+            ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"] } }),
             contents: [{ role: "user", parts }],
         },
         { headers: await vertexHeaders(config), signal: options?.signal },
