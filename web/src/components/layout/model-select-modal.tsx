@@ -1,5 +1,5 @@
 import { App, Button, Checkbox, Input, Modal, Tabs } from "antd";
-import { RefreshCw, Search } from "lucide-react";
+import { RefreshCw, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -56,7 +56,18 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
         if (!fetched.includes(name) && !existing.includes(name)) setFetched((current) => [name, ...current]);
         setSelected((current) => new Set(current).add(name));
         setManual("");
+        setSearch("");
         setActiveTab("new");
+    };
+
+    const removeFromList = (name: string) => {
+        if (activeTab === "new") setFetched((current) => current.filter((item) => item !== name));
+        else setExisting((current) => current.filter((item) => item !== name));
+        setSelected((current) => {
+            const next = new Set(current);
+            next.delete(name);
+            return next;
+        });
     };
 
     const fetchModels = async () => {
@@ -140,11 +151,14 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
             {visibleList.length ? (
                 <div className="grid grid-cols-1 gap-x-8 gap-y-3 md:grid-cols-2">
                     {visibleList.map((name) => (
-                        <Checkbox key={name} checked={selected.has(name)} onChange={(event) => toggle(name, event.target.checked)}>
-                            <span className="truncate" title={name}>
-                                {name}
-                            </span>
-                        </Checkbox>
+                        <div key={name} className="flex min-w-0 items-center justify-between gap-1">
+                            <Checkbox className="min-w-0" checked={selected.has(name)} onChange={(event) => toggle(name, event.target.checked)}>
+                                <span className="truncate" title={name}>
+                                    {name}
+                                </span>
+                            </Checkbox>
+                            <Button size="small" type="text" danger icon={<Trash2 className="size-3.5" />} onClick={() => removeFromList(name)} />
+                        </div>
                     ))}
                 </div>
             ) : (

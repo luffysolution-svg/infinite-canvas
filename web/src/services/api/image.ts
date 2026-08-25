@@ -367,11 +367,13 @@ function geminiHeaders(config: Pick<AiConfig, "apiKey">) {
     };
 }
 
-function vertexApiUrl(config: Pick<AiConfig, "baseUrl" | "model" | "apiKey">, action: "generateContent" | "streamGenerateContent") {
+function vertexApiUrl(config: Pick<AiConfig, "baseUrl" | "model" | "apiKey">, action: "generateContent" | "streamGenerateContent" | "countTokens") {
     const location = vertexLocationFromBaseUrl(config.baseUrl);
     const projectId = vertexProjectId(config.apiKey);
     const model = encodeURIComponent(geminiModelName(config.model));
-    return `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:${action}`;
+    // The "global" location has no region prefix on the host (aiplatform.googleapis.com), unlike regional locations (e.g. us-central1-aiplatform.googleapis.com).
+    const host = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
+    return `https://${host}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:${action}`;
 }
 
 async function vertexHeaders(config: Pick<AiConfig, "apiKey">) {
@@ -398,19 +400,28 @@ function falImageSizeParams(quality: string, size: string) {
 /** A small, stable Fal model used only to probe whether a key is valid; the {} body fails validation (422) rather than running generation, so the check has zero cost. */
 const FAL_PING_MODEL = "fal-ai/flux/schnell";
 
+/** A small, stable Vertex model used only to probe the full auth+project+location+model path via the free :countTokens action. */
+const VERTEX_PING_MODEL = "gemini-2.5-flash";
+
 /** Curated starting points shown under "拉取模型列表" for providers with no list-models endpoint; users can still add any other model name manually. Each entry was verified live against the real endpoint (existing route + valid auth) before being added here. */
 const FAL_PRESET_MODELS = [
     "google/nano-banana-pro",
     "google/nano-banana-pro/edit",
+    "google/nano-banana-2-lite",
     "fal-ai/nano-banana-2",
     "fal-ai/nano-banana-2/edit",
-    "fal-ai/flux-kontext/dev",
+    "fal-ai/flux-pro/kontext/max",
+    "fal-ai/flux-pro/v1.1-ultra",
     "fal-ai/flux/schnell",
     "openai/gpt-image-2",
     "bytedance/seedream/v5/pro/text-to-image",
+    "bytedance/seedream/v5/pro/edit",
     "fal-ai/ltx-video",
+    "fal-ai/kling-video/v3/pro/text-to-video",
+    "fal-ai/kling-video/v3/pro/image-to-video",
 ];
-const VERTEX_PRESET_MODELS = ["gemini-3-pro-image-preview", "gemini-3.1-flash-image", "gemini-2.5-flash-image", "gemini-2.5-pro", "gemini-2.5-flash"];
+/** gemini-3-pro-image-preview reached GA as gemini-3-pro-image (no -preview suffix); Gemini 3-family models require the "global" Vertex location (see vertexLocationFromBaseUrl). */
+const VERTEX_PRESET_MODELS = ["gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-3.1-flash-lite-image", "gemini-2.5-flash-image", "gemini-2.5-pro", "gemini-2.5-flash"];
 
 type FalImagePayload = { images?: Array<{ url?: string }>; image?: { url?: string }; detail?: unknown };
 
@@ -1078,8 +1089,13 @@ export async function testChannelConnection(channel: Pick<ModelChannel, "baseUrl
     if (!channel.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
     if (!channel.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
     if (channel.apiFormat === "vertex") {
-        await getVertexAccessToken(channel.apiKey);
-        return;
+        try {
+            const url = vertexApiUrl({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, model: VERTEX_PING_MODEL }, "countTokens");
+            await axios.post(url, { contents: [{ role: "user", parts: [{ text: "ping" }] }] }, { headers: await vertexHeaders(channel) });
+            return;
+        } catch (error) {
+            throw new Error(readAxiosError(error, apiText("requestFailed")));
+        }
     }
     if (channel.apiFormat === "fal") {
         try {

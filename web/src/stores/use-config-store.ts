@@ -68,7 +68,8 @@ const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const FAL_BASE_URL = "https://fal.run";
-const VERTEX_BASE_URL = "https://us-central1-aiplatform.googleapis.com";
+/** The "global" endpoint (no region prefix) is required for Gemini 3-family models; regional endpoints like us-central1 404 on them. */
+const VERTEX_BASE_URL = "https://aiplatform.googleapis.com";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",

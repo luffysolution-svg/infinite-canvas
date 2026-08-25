@@ -30,10 +30,12 @@ export function vertexProjectId(rawCredentials: string): string {
     return parseVertexCredentials(rawCredentials).projectId;
 }
 
-/** Vertex location comes from the baseUrl subdomain (e.g. https://us-central1-aiplatform.googleapis.com); default when unset or custom. */
+/** Vertex location comes from the baseUrl subdomain (e.g. https://us-central1-aiplatform.googleapis.com). A bare https://aiplatform.googleapis.com (no region prefix) is the "global" endpoint, which Gemini 3-family models require; it's also the default when unset or custom. */
 export function vertexLocationFromBaseUrl(baseUrl: string): string {
-    const match = baseUrl.trim().match(/^https?:\/\/([a-z0-9-]+)-aiplatform\.googleapis\.com/i);
-    return match ? match[1] : "us-central1";
+    const trimmed = baseUrl.trim();
+    if (/^https?:\/\/aiplatform\.googleapis\.com/i.test(trimmed)) return "global";
+    const match = trimmed.match(/^https?:\/\/([a-z0-9-]+)-aiplatform\.googleapis\.com/i);
+    return match ? match[1] : "global";
 }
 
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
