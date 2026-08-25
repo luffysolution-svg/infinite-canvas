@@ -385,8 +385,51 @@ function falModelUrl(baseUrl: string, model: string) {
     return `${baseUrl.trim().replace(/\/+$/, "")}/${model.trim().replace(/^\/+/, "")}`;
 }
 
+/** Fal's queue API lives on queue.fal.run regardless of what the sync fal.run baseUrl is set to. */
+function falQueueUrl(baseUrl: string, model: string, suffix = "") {
+    const host = baseUrl.trim().replace(/\/+$/, "").replace(/^https?:\/\/fal\.run/i, "https://queue.fal.run");
+    return `${host}/${model.trim().replace(/^\/+/, "")}${suffix}`;
+}
+
 function falHeaders(config: Pick<AiConfig, "apiKey">) {
     return { Authorization: `Key ${config.apiKey}`, "Content-Type": "application/json" };
+}
+
+/** Some Fal image models (e.g. openai/gpt-image-2) run well past fal.run's ~60s synchronous cutoff, which aborts the connection outright. Submitting to the async queue and polling avoids that regardless of model speed. */
+async function requestFalImage(baseUrl: string, model: string, body: Record<string, unknown>, headers: Record<string, string>, options?: RequestOptions) {
+    const response = await axios.post<{ request_id?: string; status_url?: string }>(falQueueUrl(baseUrl, model), body, { headers, signal: options?.signal });
+    const requestId = response.data.request_id;
+    if (!requestId) throw new Error(apiText("noImageReturned"));
+    const base = falQueueUrl(baseUrl, model);
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+        if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        const status = await axios.get<{ status?: string }>(`${base}/requests/${requestId}/status`, { headers, signal: options?.signal });
+        if (status.data.status === "COMPLETED") {
+            const result = await axios.get<FalImagePayload>(`${base}/requests/${requestId}`, { headers, signal: options?.signal });
+            return result.data;
+        }
+        if (status.data.status !== "IN_QUEUE" && status.data.status !== "IN_PROGRESS") throw new Error(apiText("requestFailed"));
+        await delay(2500, options?.signal);
+    }
+    throw new Error(apiText("imageGenerationTimeout"));
+}
+
+function delay(ms: number, signal?: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+        }
+        const timer = setTimeout(resolve, ms);
+        signal?.addEventListener(
+            "abort",
+            () => {
+                clearTimeout(timer);
+                reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+        );
+    });
 }
 
 /** Best-effort size hint for Fal models; most image models accept an { width, height } object and ignore it otherwise. */
@@ -847,12 +890,14 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
     if (requestConfig.apiFormat === "fal") {
         try {
-            const response = await axios.post<FalImagePayload>(
-                falModelUrl(requestConfig.baseUrl, requestConfig.model),
+            const payload = await requestFalImage(
+                requestConfig.baseUrl,
+                requestConfig.model,
                 { prompt: withSystemPrompt(requestConfig, prompt), num_images: n, ...falImageSizeParams(config.quality, config.size) },
-                { headers: falHeaders(requestConfig), signal: options?.signal },
+                falHeaders(requestConfig),
+                options,
             );
-            return parseFalImagePayload(response.data);
+            return parseFalImagePayload(payload);
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
@@ -932,17 +977,19 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         if (mask) throw new Error(apiText("maskModelUnsupported"));
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
-            const response = await axios.post<FalImagePayload>(
-                falModelUrl(requestConfig.baseUrl, requestConfig.model),
+            const payload = await requestFalImage(
+                requestConfig.baseUrl,
+                requestConfig.model,
                 {
                     prompt: withSystemPrompt(requestConfig, requestPrompt),
                     num_images: n,
                     ...(refs.length ? { image_url: refs[0], image_urls: refs } : {}),
                     ...falImageSizeParams(config.quality, config.size),
                 },
-                { headers: falHeaders(requestConfig), signal: options?.signal },
+                falHeaders(requestConfig),
+                options,
             );
-            return parseFalImagePayload(response.data);
+            return parseFalImagePayload(payload);
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }

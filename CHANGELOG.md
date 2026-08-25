@@ -5,6 +5,7 @@
 + [新增] 渠道协议新增 Fal（生图/视频）与 Vertex AI（文本/生图），Vertex AI 支持导入 Google Cloud 服务账号 JSON 自动填充凭据，也支持在文本框内手动填写/粘贴。
 + [新增] 渠道编辑新增「测试连接」按钮；Vertex AI 实际调用一次 countTokens 接口验证项目、地区与权限，Fal 以空请求体探测鉴权，均不产生生成费用。
 + [修复] Vertex AI 默认接口地址改为不带地域前缀的 global 端点，修复 Gemini 3 系列模型返回 "Publisher Model ... was not found" 的问题；同步将 Nano Banana Pro 预设模型 ID 从预览版 `gemini-3-pro-image-preview` 更新为已 GA 的 `gemini-3-pro-image`，并补充 Nano Banana 2 Lite 等预设模型。
++ [修复] Fal 生图/图生图改为提交到异步队列接口并轮询结果，修复 openai/gpt-image-2 等耗时较长的模型因超出同步接口约 60 秒限制而被中断连接、生成失败的问题。
 + [修复] 修复渠道模型选择弹窗中，手动添加模型后若搜索框仍有关键词会导致新模型被过滤隐藏的问题；「新获取的模型」与「已有的模型」列表新增单项删除入口。
 + [新增] 提示词来源新增 Freestylefly GPT Image 2 内置来源。
 
