@@ -82,9 +82,16 @@ bun run dev
 ### Docker 运行
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
+git clone git@github.com:luffysolution-svg/infinite-canvas.git
 cd infinite-canvas
 docker compose up -d
+```
+
+或直接使用已发布的镜像：
+
+```bash
+docker pull ghcr.io/luffysolution-svg/infinite-canvas:latest
+docker run -p 3000:3000 ghcr.io/luffysolution-svg/infinite-canvas:latest
 ```
 
 运行后默认端口3000，可访问 `http://localhost:3000`。
