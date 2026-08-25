@@ -400,7 +400,7 @@ const FAL_PING_MODEL = "fal-ai/flux/schnell";
 
 /** Curated starting points shown under "拉取模型列表" for providers with no list-models endpoint; users can still add any other model name manually. */
 const FAL_PRESET_MODELS = ["fal-ai/nano-banana-pro", "fal-ai/nano-banana-pro/edit", "fal-ai/flux-kontext/dev", "fal-ai/flux/schnell", "fal-ai/kling-video/v2.5-turbo/pro/text-to-video"];
-const VERTEX_PRESET_MODELS = ["gemini-3-pro-image-preview", "gemini-2.5-flash-image", "gemini-2.5-pro", "gemini-2.5-flash"];
+const VERTEX_PRESET_MODELS = ["gemini-3.1-flash-image", "gemini-2.5-flash-image", "gemini-2.5-pro", "gemini-2.5-flash"];
 
 type FalImagePayload = { images?: Array<{ url?: string }>; image?: { url?: string }; detail?: unknown };
 
