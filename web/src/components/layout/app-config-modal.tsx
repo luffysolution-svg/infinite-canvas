@@ -387,6 +387,8 @@ function normalizeImageCount(value: string) {
 function apiFormatLabel(apiFormat: ApiCallFormat, t: TFunction) {
     if (apiFormat === "gemini") return "Gemini";
     if (apiFormat === "ark") return t("config.protocols.ark");
+    if (apiFormat === "fal") return "Fal";
+    if (apiFormat === "vertex") return "Vertex AI";
     return "OpenAI";
 }
 

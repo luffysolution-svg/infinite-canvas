@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 
-export type ApiCallFormat = "openai" | "gemini" | "ark";
+export type ApiCallFormat = "openai" | "gemini" | "ark" | "fal" | "vertex";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
@@ -67,6 +67,8 @@ const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
+const FAL_BASE_URL = "https://fal.run";
+const VERTEX_BASE_URL = "https://us-central1-aiplatform.googleapis.com";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -373,11 +375,13 @@ function normalizeChannels(config: AiConfig) {
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return GEMINI_BASE_URL;
     if (apiFormat === "ark") return ARK_BASE_URL;
+    if (apiFormat === "fal") return FAL_BASE_URL;
+    if (apiFormat === "vertex") return VERTEX_BASE_URL;
     return OPENAI_BASE_URL;
 }
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
-    return apiFormat === "gemini" || apiFormat === "ark" ? apiFormat : "openai";
+    return apiFormat === "gemini" || apiFormat === "ark" || apiFormat === "fal" || apiFormat === "vertex" ? apiFormat : "openai";
 }
 
 function uniqueModelOptions(models: string[]) {

@@ -1,8 +1,9 @@
-import { Button, Drawer, Input, Segmented, Select, Space } from "antd";
-import { ListPlus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { App, Button, Drawer, Input, Segmented, Select, Space } from "antd";
+import { ListPlus, Trash2, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { parseVertexCredentials } from "@/services/api/vertex-auth";
 import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
@@ -11,13 +12,17 @@ type ScriptTarget = { name: string; capability: ModelCapability; value: string }
 
 export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: boolean; channel: ModelChannel | null; onSave: (channel: ModelChannel) => void; onClose: () => void }) {
     const { t } = useTranslation();
+    const { message } = App.useApp();
     const [draft, setDraft] = useState<ModelChannel | null>(channel);
     const [selectOpen, setSelectOpen] = useState(false);
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
     const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
         { label: "OpenAI", value: "openai" },
         { label: "Gemini", value: "gemini" },
         { label: t("config.protocols.ark"), value: "ark" },
+        { label: "Fal", value: "fal" },
+        { label: "Vertex AI", value: "vertex" },
     ];
     const capabilityOptions: Array<{ label: string; value: ModelCapability }> = ["image", "video", "text", "audio"].map((value) => ({ label: t(`config.channelEditor.capabilities.${value}`), value: value as ModelCapability }));
 
@@ -49,6 +54,18 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         onClose();
     };
 
+    const importVertexJson = async (file: File) => {
+        const text = await file.text();
+        try {
+            parseVertexCredentials(text);
+        } catch {
+            message.error(t("config.channelEditor.vertexImportInvalid"));
+            return;
+        }
+        patch({ apiKey: text });
+        message.success(t("config.channelEditor.vertexImportSuccess"));
+    };
+
     return (
         <Drawer
             open={open}
@@ -78,10 +95,34 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                     <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.baseUrl")}</span>
                     <Input value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} placeholder="https://api.example.com" />
                 </label>
-                <label className="block md:col-span-2">
-                    <span className="mb-1 block text-sm font-medium">API Key</span>
-                    <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
-                </label>
+                {draft.apiFormat === "vertex" ? (
+                    <label className="block md:col-span-2">
+                        <span className="mb-1 flex items-center justify-between gap-2">
+                            <span className="text-sm font-medium">{t("config.channelEditor.vertexApiKeyLabel")}</span>
+                            <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
+                                {t("config.channelEditor.vertexImport")}
+                            </Button>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".json,application/json"
+                                className="hidden"
+                                onChange={(event) => {
+                                    const file = event.target.files?.[0];
+                                    event.target.value = "";
+                                    if (file) void importVertexJson(file);
+                                }}
+                            />
+                        </span>
+                        <Input.TextArea value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder={t("config.channelEditor.vertexApiKeyPlaceholder")} rows={5} className="font-mono text-xs" />
+                        <span className="mt-1 block text-xs text-amber-600 dark:text-amber-500">{t("config.channelEditor.vertexSecurityNote")}</span>
+                    </label>
+                ) : (
+                    <label className="block md:col-span-2">
+                        <span className="mb-1 block text-sm font-medium">API Key</span>
+                        <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder={draft.apiFormat === "fal" ? "key_id:key_secret" : "sk-..."} />
+                    </label>
+                )}
             </div>
 
             <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-2">

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
++ [新增] 渠道协议新增 Fal（生图/视频）与 Vertex AI（文本/生图），Vertex AI 支持导入 Google Cloud 服务账号 JSON 自动填充凭据。
 + [新增] 提示词来源新增 Freestylefly GPT Image 2 内置来源。
 
 ## v0.15.1 - 2026-08-07

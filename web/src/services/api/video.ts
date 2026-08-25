@@ -27,7 +27,7 @@ type RequestOptions = { signal?: AbortSignal };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "plugin"; model: string };
+export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "fal" | "plugin"; model: string };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
@@ -42,6 +42,16 @@ function aiHeaders(config: AiConfig, contentType?: string) {
         Authorization: `Bearer ${config.apiKey}`,
         ...(contentType ? { "Content-Type": contentType } : {}),
     };
+}
+
+function falHeaders(config: AiConfig) {
+    return { Authorization: `Key ${config.apiKey}`, "Content-Type": "application/json" };
+}
+
+/** Fal's queue API lives on queue.fal.run regardless of what the sync fal.run baseUrl is set to. */
+function falQueueUrl(baseUrl: string, model: string, suffix = "") {
+    const host = baseUrl.trim().replace(/\/+$/, "").replace(/^https?:\/\/fal\.run/i, "https://queue.fal.run");
+    return `${host}/${model.trim().replace(/^\/+/, "")}${suffix}`;
 }
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
@@ -64,6 +74,10 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const script = resolveModelScript(config, selectedModel);
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
     assertVideoConfig(requestConfig, requestConfig.model);
+    if (requestConfig.apiFormat === "fal") {
+        if (videoReferences.length || audioReferences.length) throw new Error(apiText("videoReferencesUnsupported"));
+        return createFalVideoTask(requestConfig, selectedModel, prompt, references, options);
+    }
     if (isSeedanceVideoConfig(requestConfig)) {
         return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
@@ -80,7 +94,40 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     }
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);
+    if (task.provider === "fal") return pollFalVideoTask(requestConfig, task, options);
     return task.provider === "seedance" ? pollSeedanceTask(requestConfig, task, options) : pollOpenAIVideoTask(requestConfig, task, options);
+}
+
+async function createFalVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    try {
+        const response = await axios.post<{ request_id?: string }>(
+            falQueueUrl(config.baseUrl, modelOptionName(model)),
+            { prompt, ...(refs[0] ? { image_url: refs[0] } : {}) },
+            { headers: falHeaders(config), signal: options?.signal },
+        );
+        const requestId = response.data.request_id;
+        if (!requestId) throw new Error(apiText("noVideoTaskId"));
+        return { id: requestId, provider: "fal", model };
+    } catch (error) {
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
+    }
+}
+
+async function pollFalVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    const base = falQueueUrl(config.baseUrl, modelOptionName(task.model));
+    try {
+        const status = await axios.get<{ status?: string }>(`${base}/requests/${task.id}/status`, { headers: falHeaders(config), signal: options?.signal });
+        if (status.data.status === "IN_QUEUE" || status.data.status === "IN_PROGRESS") return { status: "pending" };
+        if (status.data.status !== "COMPLETED") return { status: "failed", error: apiText("videoGenerationFailed") };
+
+        const result = await axios.get<{ video?: { url?: string }; videos?: Array<{ url?: string }> }>(`${base}/requests/${task.id}`, { headers: falHeaders(config), signal: options?.signal });
+        const url = result.data.video?.url || result.data.videos?.[0]?.url;
+        if (!url) return { status: "failed", error: apiText("seedanceNoVideoUrl") };
+        return { status: "completed", result: await videoResultFromUrl(url, options) };
+    } catch (error) {
+        throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
+    }
 }
 
 async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
@@ -294,6 +341,7 @@ function assertVideoConfig(config: AiConfig, model: string) {
     if (!config.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
     if (!config.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
     if (config.apiFormat === "gemini") throw new Error(apiText("geminiVideoUnsupported"));
+    if (config.apiFormat === "vertex") throw new Error(apiText("vertexVideoUnsupported"));
 }
 
 function normalizeVideoSeconds(value: string) {

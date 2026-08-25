@@ -90,6 +90,8 @@ function assertAudioConfig(config: AiConfig, model: string) {
     if (!config.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
     if (!config.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
     if (config.apiFormat === "gemini") throw new Error(apiText("geminiAudioUnsupported"));
+    if (config.apiFormat === "vertex") throw new Error(apiText("vertexAudioUnsupported"));
+    if (config.apiFormat === "fal") throw new Error(apiText("falAudioUnsupported"));
 }
 
 async function assertAudioBlob(blob: Blob) {

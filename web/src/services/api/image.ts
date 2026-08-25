@@ -8,6 +8,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
+import { getVertexAccessToken, vertexLocationFromBaseUrl, vertexProjectId } from "./vertex-auth";
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
@@ -366,6 +367,42 @@ function geminiHeaders(config: Pick<AiConfig, "apiKey">) {
     };
 }
 
+function vertexApiUrl(config: Pick<AiConfig, "baseUrl" | "model" | "apiKey">, action: "generateContent" | "streamGenerateContent") {
+    const location = vertexLocationFromBaseUrl(config.baseUrl);
+    const projectId = vertexProjectId(config.apiKey);
+    const model = encodeURIComponent(geminiModelName(config.model));
+    return `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:${action}`;
+}
+
+async function vertexHeaders(config: Pick<AiConfig, "apiKey">) {
+    const token = await getVertexAccessToken(config.apiKey);
+    return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+}
+
+function falModelUrl(baseUrl: string, model: string) {
+    return `${baseUrl.trim().replace(/\/+$/, "")}/${model.trim().replace(/^\/+/, "")}`;
+}
+
+function falHeaders(config: Pick<AiConfig, "apiKey">) {
+    return { Authorization: `Key ${config.apiKey}`, "Content-Type": "application/json" };
+}
+
+/** Best-effort size hint for Fal models; most image models accept an { width, height } object and ignore it otherwise. */
+function falImageSizeParams(quality: string, size: string) {
+    const requestSize = resolveRequestSize(normalizeQuality(quality), size);
+    if (!requestSize) return {};
+    const dimensions = parseImageDimensions(requestSize);
+    return dimensions ? { image_size: dimensions } : {};
+}
+
+type FalImagePayload = { images?: Array<{ url?: string }>; image?: { url?: string }; detail?: unknown };
+
+function parseFalImagePayload(payload: FalImagePayload) {
+    const urls = [...(payload.images || []).map((item) => item.url), payload.image?.url].filter((url): url is string => Boolean(url));
+    if (!urls.length) throw new Error(apiText("noImageReturned"));
+    return urls.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+}
+
 function withSystemMessage<T extends ResponseInputMessage>(config: AiConfig, messages: T[]): ResponseInputMessage[] {
     const systemPrompt = config.systemPrompt.trim();
     return systemPrompt ? [{ role: "system" as const, content: systemPrompt }, ...messages] : messages;
@@ -598,10 +635,10 @@ function toGeminiToolOptions(tools: ResponseFunctionTool[], toolChoice: ToolChoi
     };
 }
 
-async function requestGeminiStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
-    const response = await fetch(`${geminiApiUrl(config, "streamGenerateContent")}?alt=sse`, {
+async function streamGeminiStyleResponse(url: string, headers: Record<string, string>, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    const response = await fetch(url, {
         method: "POST",
-        headers: geminiHeaders(config),
+        headers,
         body: JSON.stringify(body),
         signal: options?.signal,
     });
@@ -623,6 +660,14 @@ async function requestGeminiStreamingResponse(config: AiConfig, body: Record<str
     consumeGeminiStreamText(state, decoder.decode(), onDelta, true);
     if (state.error) throw new Error(state.error);
     return { content: state.text, toolCalls: state.toolCalls };
+}
+
+async function requestGeminiStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    return streamGeminiStyleResponse(`${geminiApiUrl(config, "streamGenerateContent")}?alt=sse`, geminiHeaders(config), body, onDelta, options);
+}
+
+async function requestVertexStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    return streamGeminiStyleResponse(`${vertexApiUrl(config, "streamGenerateContent")}?alt=sse`, await vertexHeaders(config), body, onDelta, options);
 }
 
 function consumeGeminiStreamText(state: GeminiStreamState, text: string, onDelta?: (text: string) => void, flush = false) {
@@ -697,6 +742,27 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
     return parseGeminiImagePayload(response.data);
 }
 
+async function requestVertexImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
+    const requests = Array.from({ length: count }, () => requestVertexImagesOnce(config, prompt, references, options));
+    return (await Promise.all(requests)).flat();
+}
+
+async function requestVertexImagesOnce(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
+    const parts: GeminiPart[] = [{ text: prompt }];
+    for (const image of references) {
+        parts.push(toGeminiImagePart(await imageToDataUrl(image)));
+    }
+    const response = await axios.post<GeminiPayload>(
+        vertexApiUrl(config, "generateContent"),
+        {
+            ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config) } }),
+            contents: [{ role: "user", parts }],
+        },
+        { headers: await vertexHeaders(config), signal: options?.signal },
+    );
+    return parseGeminiImagePayload(response.data);
+}
+
 function parseGeminiImagePayload(payload: GeminiPayload) {
     validateGeminiPayload(payload);
     const images =
@@ -739,6 +805,25 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     if (requestConfig.apiFormat === "gemini") {
         try {
             return await requestGeminiImages(requestConfig, prompt, [], n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, apiText("requestFailed")));
+        }
+    }
+    if (requestConfig.apiFormat === "vertex") {
+        try {
+            return await requestVertexImages(requestConfig, prompt, [], n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, apiText("requestFailed")));
+        }
+    }
+    if (requestConfig.apiFormat === "fal") {
+        try {
+            const response = await axios.post<FalImagePayload>(
+                falModelUrl(requestConfig.baseUrl, requestConfig.model),
+                { prompt: withSystemPrompt(requestConfig, prompt), num_images: n, ...falImageSizeParams(config.quality, config.size) },
+                { headers: falHeaders(requestConfig), signal: options?.signal },
+            );
+            return parseFalImagePayload(response.data);
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
@@ -800,6 +885,35 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         if (mask) throw new Error(apiText("geminiMaskUnsupported"));
         try {
             return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, apiText("requestFailed")));
+        }
+    }
+
+    if (requestConfig.apiFormat === "vertex") {
+        if (mask) throw new Error(apiText("geminiMaskUnsupported"));
+        try {
+            return await requestVertexImages(requestConfig, requestPrompt, references, n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, apiText("requestFailed")));
+        }
+    }
+
+    if (requestConfig.apiFormat === "fal") {
+        if (mask) throw new Error(apiText("maskModelUnsupported"));
+        const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+        try {
+            const response = await axios.post<FalImagePayload>(
+                falModelUrl(requestConfig.baseUrl, requestConfig.model),
+                {
+                    prompt: withSystemPrompt(requestConfig, requestPrompt),
+                    num_images: n,
+                    ...(refs.length ? { image_url: refs[0], image_urls: refs } : {}),
+                    ...falImageSizeParams(config.quality, config.size),
+                },
+                { headers: falHeaders(requestConfig), signal: options?.signal },
+            );
+            return parseFalImagePayload(response.data);
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
@@ -893,6 +1007,12 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             if (answer === apiText("noContent")) onDelta(answer);
             return answer;
         }
+        if (requestConfig.apiFormat === "vertex") {
+            const answer = (await requestVertexStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages), onDelta, options)).content || apiText("noContent");
+            if (answer === apiText("noContent")) onDelta(answer);
+            return answer;
+        }
+        if (requestConfig.apiFormat === "fal") throw new Error(apiText("falTextUnsupported"));
         const answer = (await requestStreamingResponse(requestConfig, {
             model: requestConfig.model,
             input: toResponseInput(withSystemMessage(requestConfig, messages)),
@@ -906,6 +1026,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
 }
 
 export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
+    if (config.apiFormat === "fal" || config.apiFormat === "vertex") throw new Error(apiText("modelListUnsupported"));
     try {
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });
