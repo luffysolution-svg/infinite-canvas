@@ -395,6 +395,13 @@ function falImageSizeParams(quality: string, size: string) {
     return dimensions ? { image_size: dimensions } : {};
 }
 
+/** A small, stable Fal model used only to probe whether a key is valid; the {} body fails validation (422) rather than running generation, so the check has zero cost. */
+const FAL_PING_MODEL = "fal-ai/flux/schnell";
+
+/** Curated starting points shown under "拉取模型列表" for providers with no list-models endpoint; users can still add any other model name manually. */
+const FAL_PRESET_MODELS = ["fal-ai/nano-banana-pro", "fal-ai/nano-banana-pro/edit", "fal-ai/flux-kontext/dev", "fal-ai/flux/schnell", "fal-ai/kling-video/v2.5-turbo/pro/text-to-video"];
+const VERTEX_PRESET_MODELS = ["gemini-3-pro-image-preview", "gemini-2.5-flash-image", "gemini-2.5-pro", "gemini-2.5-flash"];
+
 type FalImagePayload = { images?: Array<{ url?: string }>; image?: { url?: string }; detail?: unknown };
 
 function parseFalImagePayload(payload: FalImagePayload) {
@@ -1026,7 +1033,8 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
 }
 
 export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
-    if (config.apiFormat === "fal" || config.apiFormat === "vertex") throw new Error(apiText("modelListUnsupported"));
+    if (config.apiFormat === "fal") return FAL_PRESET_MODELS;
+    if (config.apiFormat === "vertex") return VERTEX_PRESET_MODELS;
     try {
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });
@@ -1052,6 +1060,26 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
 
 export async function fetchChannelModels(channel: ModelChannel) {
     return fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
+}
+
+/** Verifies baseUrl + apiKey are usable without generating anything: Vertex just needs a valid OAuth exchange, Fal is pinged with an intentionally-invalid body (422 proves the key passed auth), others reuse the model list call. */
+export async function testChannelConnection(channel: Pick<ModelChannel, "baseUrl" | "apiKey" | "apiFormat">) {
+    if (!channel.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
+    if (!channel.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
+    if (channel.apiFormat === "vertex") {
+        await getVertexAccessToken(channel.apiKey);
+        return;
+    }
+    if (channel.apiFormat === "fal") {
+        try {
+            const response = await axios.post(falModelUrl(channel.baseUrl, FAL_PING_MODEL), {}, { headers: falHeaders(channel), validateStatus: () => true });
+            if (response.status === 401 || response.status === 403) throw new Error(apiText("authenticationFailed"));
+            return;
+        } catch (error) {
+            throw new Error(readAxiosError(error, apiText("requestFailed")));
+        }
+    }
+    await fetchImageModels(channel);
 }
 
 const defaultGeminiConfig: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat" | "model" | "systemPrompt"> = {

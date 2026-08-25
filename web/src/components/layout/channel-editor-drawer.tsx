@@ -1,8 +1,9 @@
 import { App, Button, Drawer, Input, Segmented, Select, Space } from "antd";
-import { ListPlus, Trash2, Upload } from "lucide-react";
+import { ListPlus, Plug, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { testChannelConnection } from "@/services/api/image";
 import { parseVertexCredentials } from "@/services/api/vertex-auth";
 import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
@@ -16,6 +17,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     const [draft, setDraft] = useState<ModelChannel | null>(channel);
     const [selectOpen, setSelectOpen] = useState(false);
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
+    const [testing, setTesting] = useState(false);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
         { label: "OpenAI", value: "openai" },
@@ -64,6 +66,18 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         }
         patch({ apiKey: text });
         message.success(t("config.channelEditor.vertexImportSuccess"));
+    };
+
+    const testConnection = async () => {
+        setTesting(true);
+        try {
+            await testChannelConnection(draft);
+            message.success(t("config.channelEditor.testSuccess"));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : t("config.channelEditor.testFailed"));
+        } finally {
+            setTesting(false);
+        }
     };
 
     return (
@@ -123,6 +137,11 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                         <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder={draft.apiFormat === "fal" ? "key_id:key_secret" : "sk-..."} />
                     </label>
                 )}
+                <div className="md:col-span-2">
+                    <Button icon={<Plug className="size-4" />} loading={testing} onClick={() => void testConnection()}>
+                        {t("config.channelEditor.testConnection")}
+                    </Button>
+                </div>
             </div>
 
             <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-2">
